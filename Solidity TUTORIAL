@@ -1,0 +1,201 @@
+Solidity Tutorials
+Solidity is a high-level language whose syntax is similar to that of JavaScript and it is designed to compile to code for the Ethereum Virtual Machine. This tutorial provides a basic introduction to Solidity and assumes some knowledge of the Ethereum Virtual Machine and programming in general. For more details, please see the Solidity specficiation (yet to be written). This tutorial does not cover features like the natural language documentation or formal verification and is also not meant as a final specification of the language.
+
+You can start using Solidity in your browser, with no need to download or compile anything. This application only supports compilation - if you want to run the code or inject it into the blockchain, you have to use a client like AlethZero.
+
+Simple Example
+contract SimpleStorage {
+    uint storedData;
+    function set(uint x) {
+        storedData = x;
+    }
+    function get() constant returns (uint retVal) {
+        return storedData;
+    }
+}
+uint storedData declares a state variable called storedData of type uint (unsigned integer of 256 bits) whose position in storage is automatically allocated by the compiler. The functions set and get can be used to modify or retrieve the value of the variable.
+
+Subcurrency Example
+contract Coin {
+    address minter;
+    mapping (address => uint) balances;
+    function Coin() {
+        minter = msg.sender;
+    }
+    function mint(address owner, uint amount) {
+        if (msg.sender != minter) return;
+        balances[owner] += amount;
+    }
+    function send(address receiver, uint amount) {
+        if (balances[msg.sender] < amount) return;
+        balances[msg.sender] -= amount;
+        balances[receiver] += amount;
+    }
+    function queryBalance(address addr) constant returns (uint balance) {
+        return balances[addr];
+    }
+}
+This contract introduces some new concepts. One of them is the address type, which is a 160 bit value that does not allow any arithmetic operations. Furthermore, the state variable balance is of a complex datatype that maps addresses to unsigned integers. Mappings can be seen as hashtables which are virtually initialized such that every possible key exists and is mapped to a value whose byte-representation is all zeros. The special function Coin is the constructor which is run during creation of the contract and cannot be called afterwards. It permanently stores the address of the person creating the contract: Together with tx and block, msg is a magic global variable that contains some properties which allow access to the world outside of the contract. The function queryBalance is declared constant and thus is not allowed to modify the state of the contract (note that this is not yet enforced, though). In Solidity, return "parameters" are named and essentially create a local variable. So to return the balance, we could also just use balance = balances[addr]; without any return statement.
+
+Comments
+Single-line comments (//) and multi-line comments (/*...*/) are possible, while triple-slash comments (///) right in front of function declarations introduce NatSpec comments (which are not covered here).
+
+Types
+The currently implemented (elementary) types are booleans (bool), integer and fixed-length string/byte array (bytes0 to bytes32) types. The integer types are signed and unsigned integers of various bit widths (int8/uint8 to int256/uint256 in steps of 8 bits, where uint/int are aliases for uint256/int256) and addresses (of 160 bits).
+
+Comparisons (<=, !=, ==, etc.) always yield booleans which can be combined using &&, || and !. Note that the usual short-circuiting rules apply for && and ||, which means that for expressions of the form (0 < 1 || fun()), the function is actually never called.
+
+If an operator is applied to different types, the compiler tries to implicitly convert one of the operands to the type of the other (the same is true for assignments). In general, an implicit conversion is possible if it makes sense semantically and no information is lost: uint8 is convertible to uint16 and int120 to int256, but int8 is not convertible to uint256. Furthermore, unsigned integers can be converted to bytes of the same or larger size, but not vice-versa. Any type that can be converted to uint160 can also be converted to address.
+
+If the compiler does not allow implicit conversion but you know what you are doing, an explicit type conversion is sometimes possible:
+
+int8 y = -3;
+uint x = uint(y);
+At the end of this code snippet, x will have the value 0xfffff..fd (64 hex characters), which is -3 in two's complement representation of 256 bits.
+
+For convenience, it is not always necessary to explicitly specify the type of a variable, the compiler automatically infers it from the type of the first expression that is assigned to the variable:
+
+uint20 x = 0x123;
+var y = x;
+Here, the type of y will be uint20. Using var is not possible for function parameters or return parameters. State variables of integer and bytesXX types can be declared as constant.
+
+uint constant x = 32;
+bytes3 constant text = "abc";
+Integer Literals
+The type of integer literals is not determined as long as integer literals are combined with themselves. This is probably best explained with examples:
+
+var x = 1 - 2;
+The value of 1 - 2 is -1, which is assigned to x and thus x receives the type int8 -- the smallest type that contains -1. The following code snippet behaves differently, though:
+
+var one = 1;
+var two = 2;
+var x = one - two;
+Here, one and two both have type uint8 which is also propagated to x. The subtraction inside the type uint8 causes wrapping and thus the value of x will be 255.
+
+It is even possible to temporarily exceed the maximum of 256 bits as long as only integer literals are used for the computation:
+
+var x = (0xffffffffffffffffffff * 0xffffffffffffffffffff) * 0;
+Here, x will have the value 0 and thus the type uint8.
+
+Ether and Time Units
+A literal number can take a suffix of wei, finney, szabo or ether to convert between the subdenominations of ether, where Ether currency numbers without a postfix are assumed to be "wei", e.g. 2 ether == 2000 finney evaluates to true.
+
+Furthermore, suffixes of seconds, minutes, hours, days, weeks and years can be used to convert between units of time where seconds are the base unit and units are converted naively (i.e. a year is always exactly 365 days, etc.).
+
+Control Structures
+Most of the control structures from C/JavaScript are available in Solidity except for switch (not planned) and goto (note that it's called Solidity). So there is: if, else, while, for, break, continue, return. Note that there is no type conversion from non-boolean to boolean types as there is in C and JavaScript, so if (1) { ... } is not valid Solidity.
+
+Function Calls
+Functions of the current contract can be called directly, also recursively, as seen in this nonsensical example:
+
+contract c {
+  function g(uint a) returns (uint ret) { return f(); }
+  function f() returns (uint ret) { return g(7) + f(); }
+}
+The expression this.g(8); is also a valid function call, but this time, the function will be called via a message call and not directly via jumps. When calling functions of other contracts, the amount of Wei sent with the call and the gas can be specified:
+
+contract InfoFeed {
+  function info() returns (uint ret) { return 42; }
+}
+contract Consumer {
+  InfoFeed feed;
+  function setFeed(address addr) { feed = InfoFeed(addr); }
+  function callFeed() { feed.info.value(10).gas(800)(); }
+}
+Note that the expression InfoFeed(addr) performs an explicit type conversion stating that "we know that the type of the contract at the given address is InfoFeed" and this does not execute a constructor. Be careful in that feed.info.value(10).gas(800) only (locally) set the value and amount of gas sent with the function call and only the parentheses at the end perform the actual call.
+
+Function call arguments can also be given by name, in any order:
+
+contract c {
+function f(uint key, uint value) { ... }
+function g() {
+  f({value: 2, key: 3});
+}
+}
+The names for function parameters and return parameters are optional.
+
+contract test {
+  function func(uint k, uint) returns(uint){
+    return k;
+  }
+}
+Special Variables and Functions
+There are special variables and functions which always exist in the global namespace.
+
+Block and Transaction Properties
+block.coinbase (address): current block miner's address
+block.difficulty (uint): current block difficulty
+block.gaslimit (uint): current block gaslimit
+block.number (uint): current block number
+block.blockhash (function(uint) returns (bytes32)): hash of the given block
+block.timestamp (uint): current block timestamp
+msg.data (bytes): complete calldata
+msg.gas (uint): remaining gas
+msg.sender (address): sender of the message (current call)
+msg.value (uint): number of wei sent with the message
+now (uint): current block timestamp (alias for block.timestamp)
+tx.gasprice (uint): gas price of the transaction
+tx.origin (address): sender of the transaction (full call chain)
+Cryptographic Functions
+sha3(...) returns (bytes32): compute the SHA3 hash of the (tightly packed) arguments
+sha256(...) returns (bytes32): compute the SHA256 hash of the (tightly packed) arguments
+ripemd160(...) returns (bytes20): compute RIPEMD of 256 the (tightly packed) arguments
+ecrecover(bytes32, byte, bytes32, bytes32) returns (address): recover public key from elliptic curve signature
+In the above, "tightly packed" means that the arguments are concatenated without padding, i.e. sha3("ab", "c") == sha3("abc") == sha3(0x616263) == sha3(6382179) = sha3(97, 98, 99). If padding is needed, explicit type conversions can be used.
+
+Contract Related
+this (current contract's type): the current contract, explicitly convertible to address
+suicide(address): suicide the current contract, sending its funds to the given address
+Furthermore, all functions of the current contract are callable directly including the current function.
+
+Functions on addresses
+It is possible to query the balance of an address using the property balance and to send Ether (in units of wei) to an address using the send function:
+
+address x = 0x123;
+if (x.balance < 10 && address(this).balance >= 10) x.send(10);
+Furthermore, to interface with contracts that do not adhere to the ABI (like the classic NameReg contract), the function call is provided which takes an arbitrary number of arguments of any type. These arguments are ABI-serialized (i.e. also padded to 32 bytes). One exception is the case where the first argument is encoded to exactly four bytes. In this case, it is not padded to allow the use of function signatures here.
+
+address nameReg = 0x72ba7d8e73fe8eb666ea66babc8116a41bfb10e2;
+nameReg.call("register", "MyName");
+nameReg.call(bytes4(sha3("fun(uint256)")), a);
+Note that contracts inherit all members of address, so it is possible to query the balance of the current contract using this.balance.
+
+Order of Evaluation of Expressions
+The evaluation order of expressions is not specified (more formally, the order in which the children of one node in the expression tree are evaluated is not specified, but they are of course evaluated before the node itself). It is only guaranteed that statements are executed in order and short-circuiting for boolean expressions is done.
+
+Arrays
+Both variably and fixed size arrays are supported in storage and as parameters of external functions:
+
+contract ArrayContract {
+  uint[2**20] m_aLotOfIntegers;
+  bool[2][] m_pairsOfFlags;
+  function setAllFlagPairs(bool[2][] newPairs) {
+    // assignment to array replaces the complete array
+    m_pairsOfFlags = newPairs;
+  }
+  function setFlagPair(uint index, bool flagA, bool flagB) {
+    // access to a non-existing index will stop execution
+    m_pairsOfFlags[index][0] = flagA;
+    m_pairsOfFlags[index][1] = flagB;
+  }
+  function changeFlagArraySize(uint newSize) {
+    // if the new size is smaller, removed array elements will be cleared
+    m_pairsOfFlags.length = newSize;
+  }
+  function clear() {
+    // these clear the arrays completely
+    delete m_pairsOfFlags;
+    delete m_aLotOfIntegers;
+    // identical effect here
+    m_pairsOfFlags.length = 0;
+  }
+  bytes m_byteData;
+  function byteArrays(bytes data) external {
+    // byte arrays ("bytes") are different as they are stored without padding,
+    // but can be treated identical to "uint8[]"
+    m_byteData = data;
+    m_byteData.length += 7;
+    m_byteData[3] = 8;
+    delete m_byteData[2];
+  }
+}
